@@ -1,0 +1,6 @@
+github.com/dghubble/oauth1 v0.7.2 h1:pwcinOZy8z6XkNxvPmUDY52M7RDPxt0Xw1zgZ6Cl5JA=
+github.com/dghubble/oauth1 v0.7.2/go.mod h1:9erQdIhqhOHG/7K9s/tgh9Ks/AfoyrO5mW/43Lu2+kE=
+github.com/s-sasaki-0529/go-zaim v0.0.0-20220129042557-e5416837647b h1:qIXicHDOfCXlMa41pmKPAsSMqX0BcmD4EAR1I0RbnMg=
+github.com/s-sasaki-0529/go-zaim v0.0.0-20220129042557-e5416837647b/go.mod h1:Wn/8124XGSEPOWl2D8V0t6wvJcOU2dEUfsepXgdVxQo=
+golang.org/x/text v0.14.0 h1:ScX5w1eTa3QqT8oi6+ziP7dTV1S2+ALU0bI+0zXKWiQ=
+golang.org/x/text v0.14.0/go.mod h1:18ZOQIKpY8NJVqYksKHtTdi31H5itFRjB5/qKTNYzSU=
