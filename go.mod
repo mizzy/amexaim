@@ -1,4 +1,4 @@
-module github.com/mizzy/amezaim
+module github.com/mizzy/amexaim
 
 go 1.21.4
 

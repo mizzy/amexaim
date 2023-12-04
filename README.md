@@ -1,4 +1,4 @@
-# Amezaim
+# Amexaim
 
 A program to post payment data of CSV file downloaded from AMEX site to Zaim.
 
@@ -19,5 +19,5 @@ $ export ZAIM_GENRE=...
 Run following command.
 
 ```
-$ amezaim csv_file_from_amex.csv
+$ amexaim csv_file_from_amex.csv
 ```
