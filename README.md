@@ -1,1 +1,23 @@
-# amezaim
+# Amezaim
+
+A program to post payment data of CSV file downloaded from AMEX site to Zaim.
+
+## How to use
+
+Set following environment variables.
+
+```
+$ export ZAIM_CONSUMER_ID=...
+$ export ZAIM_CONSUMER_SECRET=...
+$ export ZAIM_ACCESS_TOKEN=...
+$ export ZAIM_ACCESS_TOKEN_SECRET=...
+$ export ZAIM_ACCOUNT_NAME=...
+$ export ZAIM_CATEGORY=...
+$ export ZAIM_GENRE=...
+```
+
+Run following command.
+
+```
+$ amezaim csv_file_from_amex.csv
+```
