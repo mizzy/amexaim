@@ -12,6 +12,7 @@ import (
 	gozaim "github.com/s-sasaki-0529/go-zaim"
 	"golang.org/x/text/encoding/japanese"
 	"golang.org/x/text/transform"
+	"golang.org/x/text/width"
 )
 
 type Payment struct {
@@ -113,7 +114,7 @@ func main() {
 			Amount:        amount,
 			Date:          strings.Replace(row[0], "/", "-", -1),
 			FromAccountID: accountID,
-			Comment:       strings.Replace(row[2], "?", "ー", -1),
+			Comment:       convertComment(row[2]),
 		}
 
 		duplicated, _ := payment.Duplicated()
@@ -154,4 +155,12 @@ func (p Payment) Duplicated() (bool, error) {
 	}
 
 	return false, nil
+}
+
+func convertComment(comment string) string {
+	// CSVファイル上で長音記号が?になってしまっているので変換
+	comment = strings.Replace(comment, "?", "ー", -1)
+	comment = width.Fold.String(comment)
+
+	return comment
 }
