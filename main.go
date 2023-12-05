@@ -15,16 +15,24 @@ import (
 )
 
 type Payment struct {
-	CategoryID int    `url:"category_id"`
-	GenreID    int    `url:"genre_id"`
-	Amount     int    `url:"amount"`
-	Date       string `url:"date"`
-	AccountID  int    `url:"from_account_id"`
-	Comment    string `url:"comment"`
+	CategoryID    int    `url:"category_id"`
+	GenreID       int    `url:"genre_id"`
+	Amount        int    `url:"amount"`
+	Date          string `url:"date"`
+	FromAccountID int    `url:"from_account_id"`
+	Comment       string `url:"comment"`
 }
 
+type Money struct {
+	StartDate string `url:"start_date,omitempty"`
+	EndData   string `url:"end_date,omitempty"`
+	Mode      string `url:"mode,omitempty`
+}
+
+var zaim *gozaim.Client
+
 func main() {
-	zaim := gozaim.NewClient(
+	zaim = gozaim.NewClient(
 		os.Getenv("ZAIM_CONSUMER_ID"),
 		os.Getenv("ZAIM_CONSUMER_SECRET"),
 		os.Getenv("ZAIM_ACCESS_TOKEN"),
@@ -100,19 +108,50 @@ func main() {
 
 		amount, _ := strconv.Atoi(strings.Replace(row[5], ",", "", -1))
 		payment := Payment{
-			CategoryID: categoryID,
-			GenreID:    genreID,
-			Amount:     amount,
-			Date:       strings.Replace(row[0], "/", "-", -1),
-			AccountID:  accountID,
-			Comment:    strings.Replace(row[2], "?", "ー", -1),
+			CategoryID:    categoryID,
+			GenreID:       genreID,
+			Amount:        amount,
+			Date:          strings.Replace(row[0], "/", "-", -1),
+			FromAccountID: accountID,
+			Comment:       strings.Replace(row[2], "?", "ー", -1),
+		}
+
+		duplicated, _ := payment.Duplicated()
+		if duplicated {
+			continue
 		}
 
 		params, _ := query.Values(payment)
-
 		_, err = zaim.CreatePayment(params)
 		if err != nil {
 			log.Fatal(err)
 		}
 	}
+}
+
+func (p Payment) Duplicated() (bool, error) {
+	money := Money{
+		StartDate: p.Date,
+		EndData:   p.Date,
+		Mode:      "payment",
+	}
+
+	params, _ := query.Values(money)
+
+	payments, err := zaim.FetchMoney(params)
+	if err != nil {
+		return false, err
+	}
+
+	for _, payment := range payments {
+		if payment.FromAccountID != p.FromAccountID {
+			continue
+		}
+
+		if payment.Amount == p.Amount && payment.Comment == p.Comment {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
