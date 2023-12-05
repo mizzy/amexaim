@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/go-querystring/query"
 	gozaim "github.com/s-sasaki-0529/go-zaim"
@@ -25,9 +26,10 @@ type Payment struct {
 }
 
 type Money struct {
-	StartDate string `url:"start_date,omitempty"`
-	EndData   string `url:"end_date,omitempty"`
-	Mode      string `url:"mode,omitempty`
+	StartDate     string `url:"start_date,omitempty"`
+	EndData       string `url:"end_date,omitempty"`
+	Mode          string `url:"mode,omitempty""`
+	FromAccountID int    `url:"from_account_id,omitempty""`
 }
 
 var zaim *gozaim.Client
@@ -108,7 +110,7 @@ func main() {
 		}
 
 		amount, _ := strconv.Atoi(strings.Replace(row[5], ",", "", -1))
-		payment := Payment{
+		payment := &Payment{
 			CategoryID:    categoryID,
 			GenreID:       genreID,
 			Amount:        amount,
@@ -122,19 +124,27 @@ func main() {
 			continue
 		}
 
+		err = payment.SetCategoryAndGenre()
+		if err != nil {
+			log.Fatal(err)
+		}
+
 		params, _ := query.Values(payment)
 		_, err = zaim.CreatePayment(params)
 		if err != nil {
 			log.Fatal(err)
 		}
+
+		log.Printf("Posted %#v\n", payment)
 	}
 }
 
-func (p Payment) Duplicated() (bool, error) {
+func (p *Payment) Duplicated() (bool, error) {
 	money := Money{
-		StartDate: p.Date,
-		EndData:   p.Date,
-		Mode:      "payment",
+		StartDate:     p.Date,
+		EndData:       p.Date,
+		Mode:          "payment",
+		FromAccountID: p.FromAccountID,
 	}
 
 	params, _ := query.Values(money)
@@ -145,10 +155,6 @@ func (p Payment) Duplicated() (bool, error) {
 	}
 
 	for _, payment := range payments {
-		if payment.FromAccountID != p.FromAccountID {
-			continue
-		}
-
 		if payment.Amount == p.Amount && payment.Comment == p.Comment {
 			return true, nil
 		}
@@ -163,4 +169,39 @@ func convertComment(comment string) string {
 	comment = width.Fold.String(comment)
 
 	return comment
+}
+
+func (p *Payment) SetCategoryAndGenre() error {
+	date, err := time.Parse("2006-01-02", p.Date)
+	if err != nil {
+		return err
+	}
+
+	date = date.AddDate(0, -3, 0)
+
+	money := Money{
+		StartDate:     date.Format("2006-01-02"),
+		Mode:          "payment",
+		FromAccountID: p.FromAccountID,
+	}
+
+	params, err := query.Values(money)
+	if err != nil {
+		return err
+	}
+
+	payments, err := zaim.FetchMoney(params)
+	if err != nil {
+		return err
+	}
+
+	for _, payment := range payments {
+		if payment.Comment == p.Comment {
+			p.CategoryID = payment.CategoryID
+			p.GenreID = payment.GenreID
+			return nil
+		}
+	}
+
+	return nil
 }
