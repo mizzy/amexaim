@@ -4,15 +4,24 @@ import (
 	"encoding/csv"
 	"io"
 	"log"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
 
+	"github.com/google/go-querystring/query"
 	gozaim "github.com/s-sasaki-0529/go-zaim"
 	"golang.org/x/text/encoding/japanese"
 	"golang.org/x/text/transform"
 )
+
+type Payment struct {
+	CategoryID int    `url:"category_id"`
+	GenreID    int    `url:"genre_id"`
+	Amount     int    `url:"amount"`
+	Date       string `url:"date"`
+	AccountID  int    `url:"from_account_id"`
+	Comment    string `url:"comment"`
+}
 
 func main() {
 	zaim := gozaim.NewClient(
@@ -89,13 +98,17 @@ func main() {
 			log.Fatal(err)
 		}
 
-		params := url.Values{}
-		params.Set("category_id", strconv.Itoa(categoryID))
-		params.Set("genre_id", strconv.Itoa(genreID))
-		params.Set("amount", strings.Replace(row[5], ",", "", -1))
-		params.Set("date", strings.Replace(row[0], "/", "-", -1))
-		params.Set("from_account_id", strconv.Itoa(accountID))
-		params.Set("comment", row[2])
+		amount, _ := strconv.Atoi(strings.Replace(row[5], ",", "", -1))
+		payment := Payment{
+			CategoryID: categoryID,
+			GenreID:    genreID,
+			Amount:     amount,
+			Date:       strings.Replace(row[0], "/", "-", -1),
+			AccountID:  accountID,
+			Comment:    strings.Replace(row[2], "?", "ー", -1),
+		}
+
+		params, _ := query.Values(payment)
 
 		_, err = zaim.CreatePayment(params)
 		if err != nil {
