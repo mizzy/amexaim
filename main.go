@@ -155,7 +155,7 @@ func (p *Payment) Duplicated() (bool, error) {
 	}
 
 	for _, payment := range payments {
-		if payment.Amount == p.Amount && payment.Comment == p.Comment {
+		if payment.Amount == p.Amount && strings.Contains(payment.Comment, p.Comment) {
 			return true, nil
 		}
 	}
@@ -167,6 +167,7 @@ func convertComment(comment string) string {
 	// CSVファイル上で長音記号が?になってしまっているので変換
 	comment = strings.Replace(comment, "?", "ー", -1)
 	comment = width.Fold.String(comment)
+	comment = strings.TrimSpace(comment)
 
 	return comment
 }
@@ -196,7 +197,7 @@ func (p *Payment) SetCategoryAndGenre() error {
 	}
 
 	for _, payment := range payments {
-		if payment.Comment == p.Comment {
+		if strings.Contains(payment.Comment, p.Comment) {
 			p.CategoryID = payment.CategoryID
 			p.GenreID = payment.GenreID
 			return nil
