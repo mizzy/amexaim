@@ -109,6 +109,11 @@ func main() {
 			log.Fatal(err)
 		}
 
+		// 口座振替分は支払い元の銀行口座での支払いと重複するので除外
+		if row[2] == "前回分口座振替金額" {
+			continue
+		}
+
 		amount, _ := strconv.Atoi(strings.Replace(row[5], ",", "", -1))
 		payment := &Payment{
 			CategoryID:    categoryID,
