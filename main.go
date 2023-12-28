@@ -22,7 +22,7 @@ type Payment struct {
 	Amount        int    `url:"amount"`
 	Date          string `url:"date"`
 	FromAccountID int    `url:"from_account_id"`
-	Comment       string `url:"comment"`
+	Place         string `url:"place"`
 }
 
 type Money struct {
@@ -116,7 +116,7 @@ func main() {
 			Amount:        amount,
 			Date:          strings.Replace(row[0], "/", "-", -1),
 			FromAccountID: accountID,
-			Comment:       convertComment(row[2]),
+			Place:         convertPlace(row[2]),
 		}
 
 		duplicated, _ := payment.Duplicated()
@@ -155,7 +155,7 @@ func (p *Payment) Duplicated() (bool, error) {
 	}
 
 	for _, payment := range payments {
-		if payment.Amount == p.Amount && strings.Contains(payment.Comment, p.Comment) {
+		if payment.Amount == p.Amount && (strings.Contains(payment.Comment, p.Place) || strings.Contains(payment.Place, p.Place)) {
 			return true, nil
 		}
 	}
@@ -163,13 +163,13 @@ func (p *Payment) Duplicated() (bool, error) {
 	return false, nil
 }
 
-func convertComment(comment string) string {
+func convertPlace(place string) string {
 	// CSVファイル上で長音記号が?になってしまっているので変換
-	comment = strings.Replace(comment, "?", "ー", -1)
-	comment = width.Fold.String(comment)
-	comment = strings.TrimSpace(comment)
+	place = strings.Replace(place, "?", "ー", -1)
+	place = width.Fold.String(place)
+	place = strings.TrimSpace(place)
 
-	return comment
+	return place
 }
 
 func (p *Payment) SetCategoryAndGenre() error {
@@ -197,7 +197,7 @@ func (p *Payment) SetCategoryAndGenre() error {
 	}
 
 	for _, payment := range payments {
-		if strings.Contains(payment.Comment, p.Comment) {
+		if strings.Contains(payment.Comment, p.Place) || strings.Contains(payment.Place, p.Place) {
 			p.CategoryID = payment.CategoryID
 			p.GenreID = payment.GenreID
 			return nil
