@@ -90,9 +90,15 @@ func main() {
 		log.Fatalf("Could not get genre: %s", os.Getenv("ZAIM_GENRE"))
 	}
 
-	amex, err := os.Open(os.Args[1])
-	if err != nil {
-		log.Fatal(err)
+	var amex *os.File
+
+	if len(os.Args) > 1 {
+		amex, err = os.Open(os.Args[1])
+		if err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		amex = os.Stdin
 	}
 
 	reader := csv.NewReader(transform.NewReader(amex, japanese.ShiftJIS.NewDecoder()))
