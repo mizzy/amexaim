@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -28,11 +29,50 @@ type Payment struct {
 type Money struct {
 	StartDate     string `url:"start_date,omitempty"`
 	EndData       string `url:"end_date,omitempty"`
-	Mode          string `url:"mode,omitempty""`
-	FromAccountID int    `url:"from_account_id,omitempty""`
+	Mode          string `url:"mode,omitempty"`
+	FromAccountID int    `url:"from_account_id,omitempty"`
+	Limit         int    `url:"limit,omitempty"`
+	Page          int    `url:"page,omitempty"`
 }
 
 var zaim *gozaim.Client
+
+// Zaim API は短時間に大量のリクエストを送ると 401 Unauthorized で
+// throttling してくる（公式ドキュメントには記載なし、実測値）。
+// 数分の cooldown で復帰するので、401 が出たら指数バックオフでリトライする。
+var retryBackoffs = []time.Duration{
+	30 * time.Second,
+	60 * time.Second,
+	120 * time.Second,
+	240 * time.Second,
+	480 * time.Second,
+}
+
+func isThrottled(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "401 Unauthorized")
+}
+
+func fetchMoneyWithRetry(params url.Values) (gozaim.MoneySlice, error) {
+	for i := 0; ; i++ {
+		ms, err := zaim.FetchMoney(params)
+		if err == nil || !isThrottled(err) || i >= len(retryBackoffs) {
+			return ms, err
+		}
+		log.Printf("FetchMoney throttled (401), retrying in %v (attempt %d/%d)", retryBackoffs[i], i+1, len(retryBackoffs))
+		time.Sleep(retryBackoffs[i])
+	}
+}
+
+func createPaymentWithRetry(params url.Values) (bool, error) {
+	for i := 0; ; i++ {
+		ok, err := zaim.CreatePayment(params)
+		if err == nil || !isThrottled(err) || i >= len(retryBackoffs) {
+			return ok, err
+		}
+		log.Printf("CreatePayment throttled (401), retrying in %v (attempt %d/%d)", retryBackoffs[i], i+1, len(retryBackoffs))
+		time.Sleep(retryBackoffs[i])
+	}
+}
 
 func main() {
 	zaim = gozaim.NewClient(
@@ -130,7 +170,10 @@ func main() {
 			Place:         convertPlace(row[2]),
 		}
 
-		duplicated, _ := payment.Duplicated()
+		duplicated, err := payment.Duplicated()
+		if err != nil {
+			log.Fatalf("Duplicated check failed for %s %d %q: %v", payment.Date, payment.Amount, payment.Place, err)
+		}
 		if duplicated {
 			continue
 		}
@@ -141,7 +184,7 @@ func main() {
 		}
 
 		params, _ := query.Values(payment)
-		_, err = zaim.CreatePayment(params)
+		_, err = createPaymentWithRetry(params)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -156,11 +199,12 @@ func (p *Payment) Duplicated() (bool, error) {
 		EndData:       p.Date,
 		Mode:          "payment",
 		FromAccountID: p.FromAccountID,
+		Limit:         100,
 	}
 
 	params, _ := query.Values(money)
 
-	payments, err := zaim.FetchMoney(params)
+	payments, err := fetchMoneyWithRetry(params)
 	if err != nil {
 		return false, err
 	}
@@ -191,29 +235,35 @@ func (p *Payment) SetCategoryAndGenre() error {
 
 	date = date.AddDate(0, -3, 0)
 
-	money := Money{
-		StartDate:     date.Format("2006-01-02"),
-		Mode:          "payment",
-		FromAccountID: p.FromAccountID,
-	}
+	for page := 1; ; page++ {
+		money := Money{
+			StartDate:     date.Format("2006-01-02"),
+			Mode:          "payment",
+			FromAccountID: p.FromAccountID,
+			Limit:         100,
+			Page:          page,
+		}
 
-	params, err := query.Values(money)
-	if err != nil {
-		return err
-	}
+		params, err := query.Values(money)
+		if err != nil {
+			return err
+		}
 
-	payments, err := zaim.FetchMoney(params)
-	if err != nil {
-		return err
-	}
+		payments, err := fetchMoneyWithRetry(params)
+		if err != nil {
+			return err
+		}
 
-	for _, payment := range payments {
-		if strings.Contains(payment.Comment, p.Place) || strings.Contains(payment.Place, p.Place) {
-			p.CategoryID = payment.CategoryID
-			p.GenreID = payment.GenreID
+		for _, payment := range payments {
+			if strings.Contains(payment.Comment, p.Place) || strings.Contains(payment.Place, p.Place) {
+				p.CategoryID = payment.CategoryID
+				p.GenreID = payment.GenreID
+				return nil
+			}
+		}
+
+		if len(payments) < 100 {
 			return nil
 		}
 	}
-
-	return nil
 }
