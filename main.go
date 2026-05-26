@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/csv"
 	"io"
 	"log"
@@ -15,6 +16,7 @@ import (
 	"golang.org/x/text/encoding/japanese"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/width"
+	"golang.org/x/time/rate"
 )
 
 type Payment struct {
@@ -48,12 +50,25 @@ var retryBackoffs = []time.Duration{
 	480 * time.Second,
 }
 
+// 全 Zaim API 呼び出しに掛けるレートリミッタ。デフォルトは 1 req/sec。
+// ZAIM_RATE_LIMIT_PER_SEC で上書き可能（float、例: "0.5" で 2秒に1回）。
+var limiter = rate.NewLimiter(rate.Limit(1), 1)
+
+func init() {
+	if v := os.Getenv("ZAIM_RATE_LIMIT_PER_SEC"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			limiter = rate.NewLimiter(rate.Limit(f), 1)
+		}
+	}
+}
+
 func isThrottled(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "401 Unauthorized")
 }
 
 func fetchMoneyWithRetry(params url.Values) (gozaim.MoneySlice, error) {
 	for i := 0; ; i++ {
+		_ = limiter.Wait(context.Background())
 		ms, err := zaim.FetchMoney(params)
 		if err == nil || !isThrottled(err) || i >= len(retryBackoffs) {
 			return ms, err
@@ -65,6 +80,7 @@ func fetchMoneyWithRetry(params url.Values) (gozaim.MoneySlice, error) {
 
 func createPaymentWithRetry(params url.Values) (bool, error) {
 	for i := 0; ; i++ {
+		_ = limiter.Wait(context.Background())
 		ok, err := zaim.CreatePayment(params)
 		if err == nil || !isThrottled(err) || i >= len(retryBackoffs) {
 			return ok, err
@@ -144,6 +160,8 @@ func main() {
 	reader := csv.NewReader(transform.NewReader(amex, japanese.ShiftJIS.NewDecoder()))
 	reader.Read() // Skip header
 
+	var payments []*Payment
+	var minDate string
 	for {
 		row, err := reader.Read()
 
@@ -161,27 +179,44 @@ func main() {
 		}
 
 		amount, _ := strconv.Atoi(strings.Replace(row[5], ",", "", -1))
-		payment := &Payment{
+		date := strings.Replace(row[0], "/", "-", -1)
+		payments = append(payments, &Payment{
 			CategoryID:    categoryID,
 			GenreID:       genreID,
 			Amount:        amount,
-			Date:          strings.Replace(row[0], "/", "-", -1),
+			Date:          date,
 			FromAccountID: accountID,
 			Place:         convertPlace(row[2]),
+		})
+		if minDate == "" || date < minDate {
+			minDate = date
 		}
+	}
 
-		duplicated, err := payment.Duplicated()
-		if err != nil {
-			log.Fatalf("Duplicated check failed for %s %d %q: %v", payment.Date, payment.Amount, payment.Place, err)
-		}
-		if duplicated {
+	if len(payments) == 0 {
+		return
+	}
+
+	// CSV 全行をまとめて処理する前に、Zaim の履歴を一度だけフェッチして
+	// in-memory に持つ。Duplicated と SetCategoryAndGenre の両方がこれを
+	// 参照するので、行ごとの API リクエストを大幅に削減できる。
+	// 範囲は「CSV 内の最古日付 -3ヶ月」〜「今日」。
+	minTime, err := time.Parse("2006-01-02", minDate)
+	if err != nil {
+		log.Fatal(err)
+	}
+	historyStart := minTime.AddDate(0, -3, 0).Format("2006-01-02")
+	history, err := fetchHistory(accountID, historyStart)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, payment := range payments {
+		if payment.DuplicatedIn(history) {
 			continue
 		}
 
-		err = payment.SetCategoryAndGenre()
-		if err != nil {
-			log.Fatal(err)
-		}
+		payment.SetCategoryAndGenreFrom(history)
 
 		params, _ := query.Values(payment)
 		_, err = createPaymentWithRetry(params)
@@ -193,29 +228,38 @@ func main() {
 	}
 }
 
-func (p *Payment) Duplicated() (bool, error) {
-	money := Money{
-		StartDate:     p.Date,
-		EndData:       p.Date,
-		Mode:          "payment",
-		FromAccountID: p.FromAccountID,
-		Limit:         100,
-	}
-
-	params, _ := query.Values(money)
-
-	payments, err := fetchMoneyWithRetry(params)
-	if err != nil {
-		return false, err
-	}
-
-	for _, payment := range payments {
-		if payment.Amount == p.Amount && (strings.Contains(payment.Comment, p.Place) || strings.Contains(payment.Place, p.Place)) {
-			return true, nil
+func fetchHistory(accountID int, startDate string) (gozaim.MoneySlice, error) {
+	var all gozaim.MoneySlice
+	for page := 1; ; page++ {
+		money := Money{
+			StartDate:     startDate,
+			Mode:          "payment",
+			FromAccountID: accountID,
+			Limit:         100,
+			Page:          page,
+		}
+		params, _ := query.Values(money)
+		ms, err := fetchMoneyWithRetry(params)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, ms...)
+		if len(ms) < 100 {
+			return all, nil
 		}
 	}
+}
 
-	return false, nil
+func (p *Payment) DuplicatedIn(history gozaim.MoneySlice) bool {
+	for _, payment := range history {
+		if payment.Date != p.Date {
+			continue
+		}
+		if payment.Amount == p.Amount && (strings.Contains(payment.Comment, p.Place) || strings.Contains(payment.Place, p.Place)) {
+			return true
+		}
+	}
+	return false
 }
 
 func convertPlace(place string) string {
@@ -227,43 +271,25 @@ func convertPlace(place string) string {
 	return place
 }
 
-func (p *Payment) SetCategoryAndGenre() error {
-	date, err := time.Parse("2006-01-02", p.Date)
-	if err != nil {
-		return err
+func (p *Payment) SetCategoryAndGenreFrom(history gozaim.MoneySlice) {
+	// 当該 payment の日付から 3 ヶ月以内の履歴のみを対象に、
+	// 同じ Place を含む過去 payment を探す。
+	cutoff := p.Date // 文字列比較で YYYY-MM-DD は辞書順 = 時系列順
+	threeMonthsBefore := ""
+	if t, err := time.Parse("2006-01-02", p.Date); err == nil {
+		threeMonthsBefore = t.AddDate(0, -3, 0).Format("2006-01-02")
 	}
-
-	date = date.AddDate(0, -3, 0)
-
-	for page := 1; ; page++ {
-		money := Money{
-			StartDate:     date.Format("2006-01-02"),
-			Mode:          "payment",
-			FromAccountID: p.FromAccountID,
-			Limit:         100,
-			Page:          page,
+	for _, payment := range history {
+		if payment.Date > cutoff {
+			continue
 		}
-
-		params, err := query.Values(money)
-		if err != nil {
-			return err
+		if threeMonthsBefore != "" && payment.Date < threeMonthsBefore {
+			continue
 		}
-
-		payments, err := fetchMoneyWithRetry(params)
-		if err != nil {
-			return err
-		}
-
-		for _, payment := range payments {
-			if strings.Contains(payment.Comment, p.Place) || strings.Contains(payment.Place, p.Place) {
-				p.CategoryID = payment.CategoryID
-				p.GenreID = payment.GenreID
-				return nil
-			}
-		}
-
-		if len(payments) < 100 {
-			return nil
+		if strings.Contains(payment.Comment, p.Place) || strings.Contains(payment.Place, p.Place) {
+			p.CategoryID = payment.CategoryID
+			p.GenreID = payment.GenreID
+			return
 		}
 	}
 }
