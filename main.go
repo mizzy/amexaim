@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/csv"
 	"io"
 	"log"
@@ -15,6 +16,7 @@ import (
 	"golang.org/x/text/encoding/japanese"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/width"
+	"golang.org/x/time/rate"
 )
 
 type Payment struct {
@@ -48,12 +50,25 @@ var retryBackoffs = []time.Duration{
 	480 * time.Second,
 }
 
+// 全 Zaim API 呼び出しに掛けるレートリミッタ。デフォルトは 1 req/sec。
+// ZAIM_RATE_LIMIT_PER_SEC で上書き可能（float、例: "0.5" で 2秒に1回）。
+var limiter = rate.NewLimiter(rate.Limit(1), 1)
+
+func init() {
+	if v := os.Getenv("ZAIM_RATE_LIMIT_PER_SEC"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			limiter = rate.NewLimiter(rate.Limit(f), 1)
+		}
+	}
+}
+
 func isThrottled(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "401 Unauthorized")
 }
 
 func fetchMoneyWithRetry(params url.Values) (gozaim.MoneySlice, error) {
 	for i := 0; ; i++ {
+		_ = limiter.Wait(context.Background())
 		ms, err := zaim.FetchMoney(params)
 		if err == nil || !isThrottled(err) || i >= len(retryBackoffs) {
 			return ms, err
@@ -65,6 +80,7 @@ func fetchMoneyWithRetry(params url.Values) (gozaim.MoneySlice, error) {
 
 func createPaymentWithRetry(params url.Values) (bool, error) {
 	for i := 0; ; i++ {
+		_ = limiter.Wait(context.Background())
 		ok, err := zaim.CreatePayment(params)
 		if err == nil || !isThrottled(err) || i >= len(retryBackoffs) {
 			return ok, err
