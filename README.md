@@ -1,5 +1,8 @@
 # Amexaim
 
+> [!WARNING]
+> This project is no longer maintained. The Zaim API is being shut down, so this tool will stop working. Use Zaim's built-in American Express integration instead.
+
 A program to post payment data of CSV file downloaded from AMEX site to Zaim.
 
 ## How to use
